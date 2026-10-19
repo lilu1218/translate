@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>翻譯對照</title>
+<!-- 加到手機主畫面＝全螢幕 app（Android 看 manifest，iPhone 看 apple-* 這幾行） -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="翻譯">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1f2227" media="(prefers-color-scheme: dark)">
+<style>
+/* 261019：Google 翻譯模擬版。左欄貼原文、右欄即時出譯文，改左欄只重翻改到的那一段。
+   切段＝空行；段內再用 Intl.Segmenter 切句，每句前加 [[編號]] 送翻，模型照編號回譯文——
+   ①左欄反白哪幾句，右欄就標哪幾句（片段反白另問 Haiku 對應到哪幾個字）
+   ②逐句核對編號：哪句沒回來就標「可能漏翻」，不會像 Google 那樣超過字數默默只翻一半。 */
+:root{
+  --bg:#f4f5f7; --panel:#fff; --fg:#1f2328; --sub:#6a7079; --line:#d9dce1;
+  --accent:#1a73e8; --hl:#fff7d6; --sel:#d2e3fc; --mark:#8ab4f8; --stale:#9aa0a6;
+  --err:#c5221f; --warn:#b06000; --warnbg:#fef3e0; --btn:#eef0f3;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#16181c; --panel:#1f2227; --fg:#e6e8eb; --sub:#9aa0a8; --line:#33373e;
+    --accent:#8ab4f8; --hl:#2f2b1a; --sel:#1f3a5f; --mark:#3b6db3; --stale:#6f757d;
+    --err:#f28b82; --warn:#fdd663; --warnbg:#3a2f12; --btn:#2a2e34;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#16181c; --panel:#1f2227; --fg:#e6e8eb; --sub:#9aa0a8; --line:#33373e;
+  --accent:#8ab4f8; --hl:#2f2b1a; --sel:#1f3a5f; --mark:#3b6db3; --stale:#6f757d;
+  --err:#f28b82; --warn:#fdd663; --warnbg:#3a2f12; --btn:#2a2e34;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.7 "Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif;display:flex;flex-direction:column}
+/* 全螢幕時避開瀏海、圓角和底部手勢條（瀏覽器分頁裡 env() 都是 0，不影響） */
+header{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:max(10px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) 10px max(16px,env(safe-area-inset-left));border-bottom:1px solid var(--line);background:var(--panel)}
+header .grow{flex:1}
+select,button,input,textarea{font:inherit;color:inherit}
+select,button{background:var(--btn);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+#swap{padding:4px 8px}
+#status{font-size:13px;color:var(--sub);text-align:right}
+#status.err{color:var(--err)}
+#status.warn{color:var(--warn)}
+main{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px max(16px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));min-height:0}
+.pane{display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:8px;min-height:0}
+.pane .bar{display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--line);font-size:13px;color:var(--sub);flex-wrap:wrap}
+.pane .bar .grow{flex:1}
+.pane .bar button{font-size:13px;padding:2px 8px}
+#src{flex:1;resize:none;border:0;outline:0;background:transparent;padding:12px 14px;line-height:1.7;min-height:0}
+#src::selection{background:var(--sel)}
+#out{flex:1;overflow:auto;padding:12px 14px;white-space:pre-wrap;word-break:break-word}
+#out .p{margin:0 0 1.7em;padding:0 4px;border-radius:4px}
+#out .p:last-child{margin-bottom:0}
+#out .p.hl{background:var(--hl)}
+#out .p.stale{color:var(--stale)}
+#out .p.err{color:var(--err);cursor:pointer}
+#out .s{border-radius:3px;transition:background .12s}
+#out .s.sel{background:var(--sel)}
+#out .s mark{background:var(--mark);color:inherit;border-radius:3px;padding:0 1px}
+#out .warn{display:block;margin-top:4px;padding:4px 8px;border-radius:4px;background:var(--warnbg);color:var(--warn);font-size:13px;cursor:pointer;white-space:normal}
+#out .ph{color:var(--sub)}
+dialog{border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--fg);width:min(560px,calc(100vw - 32px));padding:16px 18px}
+dialog::backdrop{background:rgba(0,0,0,.35)}
+dialog h2{font-size:17px;margin:0 0 10px}
+dialog label{display:block;font-size:13px;color:var(--sub);margin:10px 0 4px}
+dialog label.chk{display:flex;gap:8px;align-items:center;color:var(--fg);font-size:14px}
+dialog label.chk input{width:auto}
+dialog input,dialog textarea,dialog select{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+dialog textarea{min-height:110px;resize:vertical}
+dialog .row{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+dialog .note{font-size:12px;color:var(--sub);margin-top:4px}
+@media (max-width:760px){
+  main{grid-template-columns:1fr;grid-template-rows:1fr 1fr}
+}
+</style>
+</head>
+<body>
+<header>
+  <select id="from" title="原文語言">
+    <option value="auto">自動偵測</option>
+    <option value="英文">英文</option>
+    <option value="日文">日文</option>
+    <option value="韓文">韓文</option>
+    <option value="簡體中文">簡體中文</option>
+    <option value="台灣繁體中文">繁體中文</option>
+  </select>
+  <button id="swap" title="對調語言（譯文搬到左欄）">⇄</button>
+  <select id="to" title="譯文語言">
+    <option value="台灣繁體中文">繁體中文（台灣）</option>
+    <option value="英文">英文</option>
+    <option value="日文">日文</option>
+    <option value="韓文">韓文</option>
+  </select>
+  <select id="model" title="翻譯用的模型">
+    <option value="claude-opus-5-5">Opus 5.5</option>
+    <option value="claude-sonnet-5-5">Sonnet 5.5</option>
+    <option value="claude-haiku-5-5">Haiku 5.5</option>
+  </select>
+  <span class="grow"></span>
+  <span id="status"></span>
+  <button id="openSet">設定</button>
+</header>
+
+<main>
+  <section class="pane">
+    <div class="bar"><span>原文</span><span id="srcCount"></span><span id="srcTok"></span><span class="grow"></span><button id="clear">清空</button></div>
+    <textarea id="src" spellcheck="false" placeholder="貼上原文，沒有字數上限。&#10;段落用空行分開，改哪段只重翻哪段。&#10;反白一句或一段，右欄會標出對應的譯文。"></textarea>
+  </section>
+  <section class="pane">
+    <div class="bar"><span>譯文</span><span id="outCount"></span><span id="outTok"></span><span class="grow"></span><button id="retry" title="不用快取，整篇重翻">全部重翻</button><button id="copy">複製</button></div>
+    <div id="out" aria-live="polite"></div>
+  </section>
+</main>
+
+<dialog id="set">
+  <h2>設定</h2>
+  <label for="key">Claude API key</label>
+  <input id="key" type="password" autocomplete="off" placeholder="sk-ant-...">
+  <div class="note">只存在這台瀏覽器（localStorage），直接送到 api.anthropic.com，不經過別的地方。</div>
+  <label for="effort">思考深度（effort）</label>
+  <select id="effort">
+    <option value="low">low：最快，日常翻譯夠用</option>
+    <option value="medium">medium</option>
+    <option value="high">high：難句、文學性強的段落</option>
+  </select>
+  <label class="chk"><input id="phrase" type="checkbox"> 反白半句或一個詞時，用 Haiku 5.5 找出譯文裡對應的那幾個字</label>
+  <div class="note">每反白一次多一個很小的請求。關掉的話只標到整句。</div>
+  <label for="delay">停手多久開始翻（毫秒）</label>
+  <input id="delay" type="number" min="200" max="5000" step="100">
+  <label for="extra">額外指示／術語表（每次都會帶上）</label>
+  <textarea id="extra" placeholder="例：&#10;Edmund＝艾德蒙&#10;Greyhollow 不翻&#10;對白口語、旁白保留原文語氣"></textarea>
+  <label for="theme">外觀</label>
+  <select id="theme"><option value="">跟系統</option><option value="light">亮</option><option value="dark">暗</option></select>
+  <div class="row"><button id="closeSet">完成</button></div>
+</dialog>
+
+<script>
+(() => {
+'use strict';
+const $ = s => document.querySelector(s);
+const src = $('#src'), out = $('#out'), statusEl = $('#status');
+const MOCK = new URLSearchParams(location.search).has('mock');   // ?mock：不打 API，用假翻譯測版面
+const API = 'https://api.anthropic.com/v1/messages';
+const ALIGN_MODEL = 'claude-haiku-5-5';
+const MAX_PAR = 4;
+
+// ---- 偏好（localStorage 讀不到就用預設，不擋功能） ----
+const LS = 'xlate261019.';
+const ls = {
+  get(k, d) { try { const v = localStorage.getItem(LS + k); return v == null ? d : v; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(LS + k, v); } catch (e) {} }
+};
+const prefs = {
+  key: ls.get('key', ''), effort: ls.get('effort', 'low'), delay: +ls.get('delay', '700'),
+  extra: ls.get('extra', ''), theme: ls.get('theme', ''), phrase: ls.get('phrase', '1') === '1',
+  from: ls.get('from', 'auto'), to: ls.get('to', '台灣繁體中文'), model: ls.get('model', 'claude-opus-5-5')
+};
+const applyTheme = () => { if (prefs.theme) document.documentElement.dataset.theme = prefs.theme; else delete document.documentElement.dataset.theme; };
+applyTheme();
+$('#from').value = prefs.from; $('#to').value = prefs.to; $('#model').value = prefs.model;
+src.value = ls.get('draft', '');
+
+// ---- 切段、切句：記住每段每句在原文裡的起訖，反白和游標靠它對 ----
+const segmenter = (typeof Intl !== 'undefined' && Intl.Segmenter) ? new Intl.Segmenter(undefined, { granularity: 'sentence' }) : null;
+function sentencesOf(text, base) {
+  const res = []; let off = 0;
+  for (const line of text.split('\n')) {
+    if (line.trim()) {
+      const parts = segmenter ? [...segmenter.segment(line)].map(s => [s.segment, s.index]) : [[line, 0]];
+      for (const [t0, i] of parts) {
+        const t = t0.trim(); if (!t) continue;
+        const lead = t0.length - t0.trimStart().length, st = base + off + i + lead;
+        res.push({ text: t, start: st, end: st + t.length });
+      }
+    }
+    off += line.length + 1;
+  }
+  return res;
+}
+function split(text) {
+  const parts = [], re = /\n[ \t]*\n+/g;
+  let last = 0, m;
+  const push = (s, e) => { const t = text.slice(s, e); if (t.trim()) parts.push({ text: t, start: s, end: e, sents: sentencesOf(t, s) }); };
+  while ((m = re.exec(text))) { push(last, m.index); last = m.index + m[0].length; }
+  push(last, text.length);
+  return parts;
+}
+// 原文每句前插 [[k]]（k 從 1 起），其他字元原樣保留
+function marked(p) {
+  let s = '', at = p.start;
+  p.sents.forEach((x, k) => { s += p.text.slice(at - p.start, x.start - p.start) + '[[' + (k + 1) + ']]'; at = x.start; });
+  return s + p.text.slice(at - p.start);
+}
+// 譯文拆回 [[k]] 一段一段
+function parseSegs(raw) {
+  const re = /\[\[(\d+)\]\]/g, segs = []; let m, last = 0, cur = null, lead = '';
+  while ((m = re.exec(raw))) {
+    const chunk = raw.slice(last, m.index);
+    if (cur == null) lead += chunk; else segs.push({ k: cur, t: chunk });
+    cur = +m[1]; last = re.lastIndex;
+  }
+  const tail = raw.slice(last).replace(/\[\[\d*\]?$/, '');   // 串流到一半的半個標記先藏起來
+  if (cur == null) lead += tail; else segs.push({ k: cur, t: tail });
+  return { lead, segs };
+}
+
+// ---- 快取＋排隊 ----
+const cache = new Map();     // cacheKey → {raw, segs, lead, missing:[k], truncated}
+const inflight = new Map();  // cacheKey → {ctrl, partial}
+const failed = new Map();    // cacheKey → 錯誤訊息
+let paras = [], prevShown = [];
+const keyOf = t => [prefs.model, $('#from').value, $('#to').value, prefs.effort, prefs.extra, t].join('\u0001');
+
+function systemPrompt() {
+  const from = $('#from').value, to = $('#to').value;
+  let s = `你是專業譯者。把使用者給的${from === 'auto' ? '原文（自己判斷語言）' : from + '原文'}翻成${to}。
+原文每一句前面有一個 [[數字]] 標記。
+規則：
+- 譯文裡每一句前面放同一個 [[數字]]，順序照原文。每個標記都要出現、各出現一次，一句都不能漏、不能合併；兩句非合譯不可時，第二個標記仍放在它對應的意思開頭。
+- 只輸出帶標記的譯文本身，不加說明、不加引號、不加「譯文：」這類前綴。
+- 換行位置照原文；保留 Markdown、HTML 標籤、{{變數}}、<標籤>、程式碼與網址，不翻也不刪。
+- 意思優先、讀起來要像${to}母語者寫的，不逐字硬翻；語氣、人稱、敬語程度照原文。原文已經是${to}的部分照抄。`;
+  if (to === '台灣繁體中文') s += `
+- 用台灣用語與台灣標點（「」『』、……、──、全形標點），絕對不出現簡體字。`;
+  if (prefs.extra.trim()) s += `\n\n使用者的額外指示與術語（優先遵守）：\n${prefs.extra.trim()}`;
+  return s;
+}
+function userPrompt(i) {
+  const prev = paras[i - 1]?.text, next = paras[i + 1]?.text;
+  let u = '';
+  if (prev || next) {
+    u += '以下是前後文，只用來理解語境，不要翻：\n';
+    if (prev) u += `<前一段>\n${prev}\n</前一段>\n`;
+    if (next) u += `<後一段>\n${next}\n</後一段>\n`;
+    u += '\n只翻譯這一段：\n';
+  }
+  return u + `<原文>\n${marked(paras[i])}\n</原文>`;
+}
+
+function headersFor(model) {
+  const h = { 'content-type': 'application/json', 'x-api-key': prefs.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' };
+  // 被安全分類器擋下時由伺服器自動換模型重跑（Opus 5.5／Sonnet 5.5 支援，Haiku 沒有）
+  if (model !== 'claude-haiku-5-5') h['anthropic-beta'] = 'server-side-fallback-2026-07-01';
+  return h;
+}
+async function apiError(res) {
+  let msg = res.status + '';
+  try { const j = await res.json(); msg += ' ' + (j.error?.message || ''); } catch (e) {}
+  return new Error(msg);
+}
+
+function finish(ck, raw, n, stop) {
+  const { lead, segs } = parseSegs(raw.replace(/^\s+|\s+$/g, ''));
+  const got = new Set(segs.filter(s => s.t.trim()).map(s => s.k));
+  const missing = []; for (let k = 1; k <= n; k++) if (!got.has(k)) missing.push(k);
+  cache.set(ck, { raw, lead, segs, missing, truncated: stop === 'max_tokens' });
+}
+
+async function translate(i, ck) {
+  const ctrl = new AbortController(), job = { ctrl, partial: '' }, p = paras[i], n = p.sents.length;
+  inflight.set(ck, job); failed.delete(ck); render();
+  try {
+    if (MOCK) {
+      const drop = new URLSearchParams(location.search).has('drop');   // ?mock&drop：假裝漏翻第 2 句，測漏翻提示
+      const text = p.sents.map((s, k) => drop && k === 1 ? '' : '[[' + (k + 1) + ']]［譯］' + [...s.text].reverse().join('')).join(' ');
+      for (let k = 0; k < text.length; k += 5) {
+        if (ctrl.signal.aborted) throw new DOMException('', 'AbortError');
+        job.partial = text.slice(0, k + 5); render(); await new Promise(r => setTimeout(r, 15));
+      }
+      finish(ck, text, n, 'end_turn');
+    } else {
+      const model = prefs.model;
+      const body = { model, max_tokens: 64000, stream: true, output_config: { effort: prefs.effort },
+        system: systemPrompt(), messages: [{ role: 'user', content: userPrompt(i) }] };
+      if (model !== 'claude-haiku-5-5') body.fallbacks = 'default';
+      const res = await fetch(API, { method: 'POST', headers: headersFor(model), body: JSON.stringify(body), signal: ctrl.signal });
+      if (!res.ok) throw await apiError(res);
+      const reader = res.body.getReader(), dec = new TextDecoder();
+      let buf = '', stop = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let cut;
+        while ((cut = buf.indexOf('\n\n')) >= 0) {
+          const ev = buf.slice(0, cut); buf = buf.slice(cut + 2);
+          const data = ev.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).trim()).join('');
+          if (!data) continue;
+          let j; try { j = JSON.parse(data); } catch (e) { continue; }
+          if (j.type === 'content_block_delta' && j.delta?.type === 'text_delta') { job.partial += j.delta.text; render(); }
+          else if (j.type === 'message_delta' && j.delta?.stop_reason) stop = j.delta.stop_reason;
+          else if (j.type === 'error') throw new Error(j.error?.message || '串流錯誤');
+        }
+      }
+      if (stop === 'refusal') throw new Error('模型拒絕翻這段');
+      if (!stop) throw new Error('連線中斷，沒收完');
+      finish(ck, job.partial, n, stop);
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') failed.set(ck, String(e.message || e));
+  } finally {
+    if (inflight.get(ck) === job) inflight.delete(ck);
+    pump();
+  }
+}
+
+function pump() {
+  const want = new Set(paras.map(p => keyOf(p.text)));
+  for (const [ck, job] of inflight) if (!want.has(ck)) { job.ctrl.abort(); inflight.delete(ck); }   // 那段已經改掉了，舊請求作廢
+  if (MOCK || prefs.key) {
+    for (let i = 0; i < paras.length && inflight.size < MAX_PAR; i++) {
+      const ck = keyOf(paras[i].text);
+      if (!cache.has(ck) && !inflight.has(ck) && !failed.has(ck)) translate(i, ck);
+    }
+  }
+  render();
+}
+
+// ---- 反白狀態 ----
+let hlIndex = -1;               // 游標所在段
+let selSents = new Set();       // 'pi:k' 反白蓋到的句子
+let phrase = null;              // {pi, k, text}：只反白了一句裡的一部分
+const phraseHits = new Map();   // 對齊快取：譯句＋原句＋片段 → 譯文裡對應的字（'' ＝找不到）
+
+// ---- 右欄 ----
+function segSpan(pi, k, t) {
+  const sp = document.createElement('span');
+  sp.className = 's'; sp.dataset.pi = pi; sp.dataset.k = k;
+  const tag = pi + ':' + k;
+  if (selSents.has(tag)) sp.classList.add('sel');
+  const hit = phrase && phrase.pi === pi && phrase.k === k ? phraseHits.get(phraseKey(pi, k, t)) : '';
+  const at = hit ? t.indexOf(hit) : -1;
+  if (at >= 0) {
+    const mk = document.createElement('mark'); mk.textContent = hit;
+    sp.append(t.slice(0, at), mk, t.slice(at + hit.length));
+  } else sp.textContent = t;
+  return sp;
+}
+function render() {
+  const frag = document.createDocumentFragment(), shown = [];
+  let busy = 0, errs = 0, missTot = 0, trunc = 0, sentTot = 0;
+  paras.forEach((p, i) => {
+    sentTot += p.sents.length;
+    const ck = keyOf(p.text), d = document.createElement('div');
+    d.className = 'p'; d.dataset.i = i;
+    const c = cache.get(ck), job = inflight.get(ck);
+    let raw = null;
+    if (c) raw = c.raw; else if (job && job.partial) raw = job.partial;
+    if (raw != null) {
+      const { lead, segs } = c || parseSegs(raw);
+      if (lead.trim()) d.append(lead);
+      segs.forEach((s, j) => d.append(segSpan(i, s.k, j === segs.length - 1 ? s.t.replace(/\s+$/, '') : s.t)));
+      if (!c) busy++;
+      if (c && (c.missing.length || c.truncated)) {
+        const w = document.createElement('span'); w.className = 'warn'; w.dataset.i = i;
+        const parts = [];
+        if (c.truncated) parts.push('這段太長，輸出被截斷了');
+        if (c.missing.length) { missTot += c.missing.length; parts.push('第 ' + c.missing.join('、') + ' 句可能漏翻：' + c.missing.map(k => '「' + p.sents[k - 1].text.slice(0, 30) + (p.sents[k - 1].text.length > 30 ? '…' : '') + '」').join('')); }
+        if (c.truncated) trunc++;
+        w.textContent = parts.join('；') + '。點這裡重翻這段';
+        d.append(w);
+      }
+    } else if (failed.has(ck)) { errs++; d.textContent = '（這段沒翻成：' + failed.get(ck) + '。點這裡重試）'; d.classList.add('err'); }
+    else { busy++; d.textContent = prevShown[i] || '……'; d.classList.add('stale'); }
+    if (i === hlIndex) d.classList.add('hl');
+    const plain = c ? (c.lead + c.segs.map(s => s.t).join('')).trim() : (raw != null ? d.textContent : (prevShown[i] || ''));
+    shown.push(plain);
+    frag.appendChild(d);
+  });
+  if (!paras.length) { const d = document.createElement('div'); d.className = 'ph'; d.textContent = '譯文會出現在這裡'; frag.appendChild(d); }
+  out.replaceChildren(frag);
+  prevShown = shown;
+  $('#outCount').textContent = paras.length ? countOf(shown.join('\n\n')) : '';
+  updTok('out', paras.length ? shown.join('\n\n') : '');
+  const scope = `全文 ${paras.length} 段 ${sentTot} 句`;
+  if (!MOCK && !prefs.key && paras.length) setStatus('先在「設定」填 API key', 'err');
+  else if (busy) setStatus(`${scope}・翻譯中（剩 ${busy} 段）`);
+  else if (errs) setStatus(`${scope}・${errs} 段失敗`, 'err');
+  else if (missTot || trunc) setStatus(`${scope}・${missTot ? missTot + ' 句可能漏翻' : ''}${missTot && trunc ? '、' : ''}${trunc ? trunc + ' 段被截斷' : ''}`, 'warn');
+  else if (paras.length) setStatus(`${scope}・全部翻完`);
+  else setStatus('');
+}
+const countOf = t => t.replace(/\s/g, '').length + ' 字';
+function setStatus(t, kind) { statusEl.textContent = t; statusEl.className = kind || ''; }
+
+// ---- tokens：打官方 count_tokens（不收費），照上方選的模型算，不用字數去估 ----
+// count_tokens 回的是「一則 user 訊息」的數，含固定包裝開銷；開銷用單一字母 "a"（1 個 token）量一次再扣掉。
+const COUNT_API = 'https://api.anthropic.com/v1/messages/count_tokens';
+const tokCache = new Map();   // model + 文字 → 純文字 tokens
+const tokBase = new Map();    // model → 包裝開銷（Promise）
+async function rawCount(content, model) {
+  if (MOCK) { await new Promise(r => setTimeout(r, 100)); return [...content].length + 7; }   // ?mock：假數字，只測版面
+  const res = await fetch(COUNT_API, { method: 'POST', body: JSON.stringify({ model, messages: [{ role: 'user', content }] }),
+    headers: { 'content-type': 'application/json', 'x-api-key': prefs.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' } });
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()).input_tokens;
+}
+async function countTokens(text, model) {
+  const ck = model + '\u0001' + text;
+  if (tokCache.has(ck)) return tokCache.get(ck);
+  if (!tokBase.has(model)) tokBase.set(model, rawCount('a', model).then(n => n - 1).catch(e => { tokBase.delete(model); throw e; }));
+  const [n, base] = await Promise.all([rawCount(text, model), tokBase.get(model)]);
+  tokCache.set(ck, n - base);
+  return n - base;
+}
+const tokJobs = { src: { el: '#srcTok', timer: 0, want: null }, out: { el: '#outTok', timer: 0, want: null } };
+const fmtTok = n => '・' + n.toLocaleString() + ' tokens';
+function updTok(which, text) {
+  const j = tokJobs[which], el = $(j.el), model = prefs.model, want = model + '\u0001' + text;
+  if (j.want === want) return;   // 同一段字已經在算／算好了（render 很頻繁，別重排）
+  j.want = want; clearTimeout(j.timer); el.title = '';
+  if (!text.trim()) { el.textContent = ''; return; }
+  if (tokCache.has(want)) { el.textContent = fmtTok(tokCache.get(want)); return; }
+  if (!MOCK && !prefs.key) { el.textContent = ''; return; }
+  el.textContent = '・… tokens';
+  j.timer = setTimeout(async () => {
+    try { const n = await countTokens(text, model); if (j.want === want) el.textContent = fmtTok(n); }
+    catch (e) { if (j.want === want) { el.textContent = '・tokens 算不出來'; el.title = String(e.message || e); } }
+  }, 800);
+}
+const recountTok = () => { tokJobs.src.want = tokJobs.out.want = null; updTok('src', src.value); updTok('out', paras.length ? prevShown.join('\n\n') : ''); };
+
+out.addEventListener('click', e => {
+  const t = e.target.closest('.p.err, .warn'); if (!t) return;
+  const i = +(t.dataset.i ?? t.closest('.p').dataset.i), ck = keyOf(paras[i].text);
+  failed.delete(ck); cache.delete(ck); pump();
+});
+
+// ---- 片段對齊：反白只蓋到一句裡的一部分 → 問 Haiku 譯文裡對應哪幾個字 ----
+const phraseKey = (pi, k, t) => t.trim() + '\u0001' + (paras[pi]?.sents[k - 1]?.text || '') + '\u0001' + (phrase?.text || '');
+function segText(pi, k) {
+  const c = cache.get(keyOf(paras[pi].text)); if (!c) return '';
+  return c.segs.filter(s => s.k === k).map(s => s.t).join('').trim();
+}
+let alignCtrl = null;
+async function alignPhrase() {
+  if (!phrase || !prefs.phrase) return;
+  const { pi, k, text } = phrase, tr = segText(pi, k), srcSent = paras[pi].sents[k - 1].text;
+  if (!tr) return;
+  const pk = phraseKey(pi, k, tr);
+  if (phraseHits.has(pk)) { render(); return; }
+  alignCtrl?.abort(); const ctrl = alignCtrl = new AbortController();
+  let ans = '';
+  try {
+    if (MOCK) { await new Promise(r => setTimeout(r, 150)); ans = [...text].reverse().join(''); }
+    else {
+      if (!prefs.key) return;
+      const res = await fetch(API, { method: 'POST', headers: headersFor(ALIGN_MODEL), signal: ctrl.signal, body: JSON.stringify({
+        model: ALIGN_MODEL, max_tokens: 4000, output_config: { effort: 'low' },
+        system: '你做雙語逐字對齊。只輸出答案本身，不加引號、不加說明。',
+        messages: [{ role: 'user', content: `原句：${srcSent}\n譯句：${tr}\n原句裡被選取的片段：${text}\n\n輸出譯句中與這個片段意思對應的連續片段，必須逐字取自譯句（可以短到一個詞），不要改寫。譯句裡沒有對應的就輸出 NONE。` }]
+      }) });
+      if (!res.ok) throw await apiError(res);
+      const j = await res.json();
+      ans = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+    }
+  } catch (e) { if (e.name !== 'AbortError') setStatus('片段對齊失敗：' + (e.message || e), 'err'); return; }
+  if (ctrl !== alignCtrl) return;
+  ans = ans.replace(/^[「『"'“”‘’]+|[」』"'“”‘’]+$/g, '');
+  const hit = ans && ans !== 'NONE' && tr.includes(ans) ? ans : '';
+  phraseHits.set(pk, hit);
+  render(); scrollToSel();
+}
+
+// ---- 左欄：停手 delay 毫秒後重切段、送翻 ----
+let timer = 0;
+function onInput() {
+  $('#srcCount').textContent = src.value.trim() ? countOf(src.value) : '';
+  updTok('src', src.value);
+  ls.set('draft', src.value);
+  clearTimeout(timer);
+  timer = setTimeout(() => { paras = split(src.value); pump(); syncSel(); }, prefs.delay);
+}
+src.addEventListener('input', onInput);
+
+// 游標／反白 → 右欄：游標所在段淡黃，反白蓋到的句子藍底，句內片段再深一層
+let selTimer = 0;
+function syncSel() {
+  const a = src.selectionStart, b = src.selectionEnd;
+  let idx = -1; paras.forEach((p, i) => { if (a >= p.start && a <= p.end) idx = i; });
+  const next = new Set(); let ph = null;
+  if (b > a) {
+    paras.forEach((p, pi) => p.sents.forEach((s, k) => { if (s.start < b && s.end > a) next.add(pi + ':' + (k + 1)); }));
+    if (next.size === 1) {
+      const [pi, k] = [...next][0].split(':').map(Number), s = paras[pi].sents[k - 1];
+      const t = src.value.slice(Math.max(a, s.start), Math.min(b, s.end)).trim();
+      if (t && t.length < s.text.length) ph = { pi, k, text: t };
+    }
+  }
+  const changed = idx !== hlIndex || [...next].join() !== [...selSents].join() || JSON.stringify(ph) !== JSON.stringify(phrase);
+  hlIndex = idx; selSents = next; phrase = ph;
+  if (!changed) return;
+  render(); scrollToSel();
+  clearTimeout(selTimer); if (ph) selTimer = setTimeout(alignPhrase, 300);
+}
+function scrollToSel() {
+  const el = out.querySelector('.s mark') || out.querySelector('.s.sel') || out.querySelector('.p.hl');
+  if (!el) return;
+  const r = el.getBoundingClientRect(), o = out.getBoundingClientRect();
+  if (r.top < o.top || r.bottom > o.bottom) out.scrollTop += r.top - o.top - o.height / 3;
+}
+document.addEventListener('selectionchange', () => { if (document.activeElement === src) syncSel(); });
+['mouseup', 'keyup'].forEach(ev => src.addEventListener(ev, syncSel));
+
+// ---- 上方列 ----
+function langChanged() {
+  prefs.from = $('#from').value; prefs.to = $('#to').value; prefs.model = $('#model').value;
+  ls.set('from', prefs.from); ls.set('to', prefs.to); ls.set('model', prefs.model);
+  failed.clear(); pump(); recountTok();
+}
+['#from', '#to', '#model'].forEach(s => $(s).addEventListener('change', langChanged));
+$('#swap').addEventListener('click', () => {
+  const f = $('#from').value, t = $('#to').value, text = prevShown.join('\n\n');
+  if (f !== 'auto' && $('#to').querySelector(`option[value="${f}"]`)) $('#to').value = f;
+  if ($('#from').querySelector(`option[value="${t}"]`)) $('#from').value = t;
+  if (text.trim()) { src.value = text; onInput(); }
+  langChanged();
+});
+$('#clear').addEventListener('click', () => { src.value = ''; onInput(); src.focus(); });
+$('#copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(prevShown.join('\n\n')); setStatus('已複製'); } catch (e) { setStatus('複製失敗', 'err'); }
+});
+$('#retry').addEventListener('click', () => { paras.forEach(p => cache.delete(keyOf(p.text))); failed.clear(); pump(); });
+
+// ---- 設定 ----
+const dlg = $('#set');
+$('#openSet').addEventListener('click', () => {
+  $('#key').value = prefs.key; $('#effort').value = prefs.effort; $('#delay').value = prefs.delay;
+  $('#extra').value = prefs.extra; $('#theme').value = prefs.theme; $('#phrase').checked = prefs.phrase; dlg.showModal();
+});
+$('#closeSet').addEventListener('click', () => {
+  prefs.key = $('#key').value.trim(); prefs.effort = $('#effort').value;
+  prefs.delay = Math.min(5000, Math.max(200, +$('#delay').value || 700));
+  prefs.extra = $('#extra').value; prefs.theme = $('#theme').value; prefs.phrase = $('#phrase').checked;
+  for (const k of ['key', 'effort', 'delay', 'extra', 'theme']) ls.set(k, prefs[k]);
+  ls.set('phrase', prefs.phrase ? '1' : '0');
+  applyTheme(); dlg.close(); failed.clear(); pump(); recountTok();
+});
+
+// 開頁：有草稿就直接翻
+paras = split(src.value);
+$('#srcCount').textContent = src.value.trim() ? countOf(src.value) : '';
+updTok('src', src.value);
+pump();
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+})();
+</script>
+</body>
+</html>
